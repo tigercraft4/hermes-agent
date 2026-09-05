@@ -35,7 +35,7 @@ from typing import Any, Optional
 
 from agent.redact import redact_sensitive_text
 from hermes_cli.goals import judge_goal
-from tools.registry import registry, tool_error
+from tools.registry import no_cache_check_fn, registry, tool_error
 from hermes_cli.config import cfg_get, load_config
 
 logger = logging.getLogger(__name__)
@@ -100,6 +100,7 @@ def _reject_delegated_child_mutation(tool_name: str) -> Optional[str]:
     )
 
 
+@no_cache_check_fn
 def _check_kanban_mode() -> bool:
     """Task-lifecycle tools are available when:
 
@@ -111,6 +112,14 @@ def _check_kanban_mode() -> bool:
     kanban tools. Workers spawned by the kanban dispatcher (gateway-
     embedded by default) and orchestrator profiles with the kanban
     toolset enabled see the Kanban lifecycle tool surface.
+
+    Uncached (``@no_cache_check_fn``): both the ``HERMES_KANBAN_TASK`` env
+    var and the delegated-child context are request/env-dependent, but the
+    registry's check_fn cache key is only ``(fn, profile_scope)`` — it
+    cannot see a mid-process env flip (e.g. a dispatcher worker spawned
+    in-process after a non-worker call already cached ``False`` for this
+    profile). A stale cached ``False`` here silently strips the entire
+    Kanban lifecycle surface from a real worker.
     """
     if _is_delegated_child_context():
         return False
@@ -119,6 +128,7 @@ def _check_kanban_mode() -> bool:
     return _profile_has_kanban_toolset()
 
 
+@no_cache_check_fn
 def _check_kanban_orchestrator_mode() -> bool:
     """Board-routing tools (kanban_list, kanban_unblock) are intentionally
     hidden from task workers.
@@ -127,6 +137,8 @@ def _check_kanban_orchestrator_mode() -> bool:
     lifecycle tools (complete/block/heartbeat), not enumerate or unblock
     board state. Profiles that explicitly opt into the kanban toolset
     and are NOT scoped to a single task are the orchestrator surface.
+
+    Uncached for the same reason as ``_check_kanban_mode`` above.
     """
     if _is_delegated_child_context():
         return False
